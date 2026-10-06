@@ -1,0 +1,187 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  # Rescan hebdomadaire : de nouvelles CVE sont publiées même si le code ne change pas.
+  schedule:
+    - cron: "41 6 * * 1"
+  workflow_dispatch:
+
+# Moindre privilège : chaque job ne reçoit que la lecture du dépôt.
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+# Actions épinglées sur un SHA de commit, images des outils épinglées sur un digest.
+env:
+  TERRAFORM_IMAGE: hashicorp/terraform@sha256:18f9986038bbaf02cf49db9c09261c778161c51dcc7fb7e355ae8938459428cd # 1.9.8
+  CHECKOV_IMAGE: bridgecrew/checkov@sha256:395ab21f8dc5d457f05001598638a98d142a98e264d610650c084d0ef2e1b4a5 # 3.3.24
+  TRIVY_IMAGE: aquasec/trivy@sha256:af6acf9a6b85dfe389a1941505c0ce9efef52a4719635e1a962f022a3d855daa # 0.75.0
+  GITLEAKS_IMAGE: zricethezav/gitleaks@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f # v8.30.1
+  SHELLCHECK_IMAGE: koalaman/shellcheck@sha256:bb596a0d169b85ddd81d8b6d3a2ff6d5baf5fca10b97f575ebc647c3dff62b3d # v0.11.0
+
+jobs:
+  secrets:
+    name: Secrets (Gitleaks)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # tout l'historique : un secret supprimé reste dans les anciens commits
+          persist-credentials: false
+
+      - name: Scan de l'historique Git
+        run: docker run --rm -v "$PWD":/repo "$GITLEAKS_IMAGE" git /repo --no-banner --redact
+
+  terraform:
+    name: Terraform (format et validation)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: terraform
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: terraform fmt
+        run: docker run --rm -v "$PWD":/tf -w /tf "$TERRAFORM_IMAGE" fmt -check -recursive -diff
+
+      - name: terraform init (sans backend)
+        run: |
+          docker run --rm -v "$PWD":/tf -w /tf \
+            -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
+            "$TERRAFORM_IMAGE" init -backend=false -input=false
+
+      - name: terraform validate
+        run: docker run --rm -v "$PWD":/tf -w /tf "$TERRAFORM_IMAGE" validate
+
+  iac-security:
+    name: Sécurité de l'IaC (Checkov)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Analyse Checkov du code Terraform
+        # Mode rapport : l'infrastructure a été conçue pour un environnement de cours
+        # (AWS Academy). Les écarts sont publiés et servent de feuille de route.
+        run: |
+          mkdir -p reports
+          docker run --rm -v "$PWD":/src "$CHECKOV_IMAGE" -d /src/terraform \
+            --soft-fail --quiet --compact -o json > reports/checkov.json
+          {
+            echo "## Checkov : bonnes pratiques de sécurité AWS"
+            echo
+            jq -r '"Contrôles réussis : **\(.summary.passed)** · à améliorer : **\(.summary.failed)**"' reports/checkov.json
+            echo
+            echo "| Contrôle | Description |"
+            echo "|---|---|"
+            jq -r '[.results.failed_checks[] | "| \(.check_id) | \(.check_name) |"] | unique | .[]' reports/checkov.json
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Publier le rapport
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: checkov-report
+          path: reports/
+          retention-days: 30
+
+  images:
+    name: Image ${{ matrix.name }} (build et Trivy)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: auth-lambda
+            context: microservice-auth
+            dockerfile: microservice-auth/Dockerfile.lambda
+          - name: chat
+            context: microservice-messaging
+            dockerfile: microservice-messaging/Dockerfile
+          - name: ui
+            context: ui-chat
+            dockerfile: ui-chat/Dockerfile
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Build de l'image
+        run: docker build -f "${{ matrix.dockerfile }}" -t "cloud-chat-${{ matrix.name }}:ci" "${{ matrix.context }}"
+
+      - name: Scan Trivy (vulnérabilités hautes et critiques)
+        # Mode rapport : le résultat est publié dans le résumé de l'exécution.
+        run: |
+          mkdir -p reports
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "$PWD/reports":/reports \
+            "$TRIVY_IMAGE" image --quiet --scanners vuln --severity HIGH,CRITICAL \
+            --format json --output "/reports/trivy-${{ matrix.name }}.json" "cloud-chat-${{ matrix.name }}:ci"
+          {
+            echo "## Trivy : image ${{ matrix.name }}"
+            echo
+            echo "| Sévérité | Nombre |"
+            echo "|---|---|"
+            jq -r '[.Results[]?.Vulnerabilities[]?.Severity] | group_by(.) | map("| \(.[0]) | \(length) |") | .[]' \
+              "reports/trivy-${{ matrix.name }}.json"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Publier le rapport
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: trivy-${{ matrix.name }}
+          path: reports/
+          retention-days: 30
+
+  smoke-test:
+    name: Test de fumée (Docker Compose)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Démarrer la plateforme
+        run: |
+          cp .env.example .env
+          docker compose up -d --build --wait --wait-timeout 180
+
+      - name: Vérifier les sondes de santé
+        run: |
+          for url in http://localhost:3001/health http://localhost:3002/health; do
+            for _ in $(seq 1 30); do
+              if curl -fsS "$url"; then echo; continue 2; fi
+              sleep 2
+            done
+            echo "Service injoignable : $url"; docker compose logs; exit 1
+          done
+          curl -fsS -o /dev/null http://localhost:8080 && echo "Frontend OK"
+
+      - name: Arrêter la plateforme
+        if: always()
+        run: docker compose down -v
+
+  scripts:
+    name: Scripts de déploiement (ShellCheck)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: ShellCheck
+        run: docker run --rm -v "$PWD":/mnt -w /mnt "$SHELLCHECK_IMAGE" deploy-auth.sh deploy-chat.sh deploy-front.sh

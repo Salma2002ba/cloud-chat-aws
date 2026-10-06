@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="300" viewBox="0 0 1200 300" role="img" aria-labelledby="t d">
+  <title id="t">Cloud Chat on AWS</title>
+  <desc id="d">Bannière du projet : application de chat en microservices déployée sur AWS avec Terraform.</desc>
+  <rect width="1200" height="300" rx="18" fill="#0a0a0b"/>
+  <!-- Bande aux couleurs du portfolio -->
+  <rect x="0" y="0" width="400" height="8" fill="#e8397d"/>
+  <rect x="400" y="0" width="400" height="8" fill="#29c282"/>
+  <rect x="800" y="0" width="400" height="8" fill="#3d9fe8"/>
+  <text x="60" y="110" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="22" font-weight="700" letter-spacing="3" fill="#3de8a0">CLOUD · MICROSERVICES · INFRASTRUCTURE AS CODE</text>
+  <text x="60" y="170" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="50" font-weight="700" fill="#f0ede8">Cloud Chat on AWS<tspan fill="#e8397d">.</tspan></text>
+  <text x="60" y="218" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="26" fill="#8b8b94">Lambda · ECS Fargate · RDS · S3 · Terraform · Docker</text>
+  <!-- Pictogramme : un nuage relié à trois services -->
+  <g transform="translate(880 60)" fill="none" stroke-width="6" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M70 90 h150 a40 40 0 0 0 -8 -79 a55 55 0 0 0 -104 14 a35 35 0 0 0 -38 65 z" stroke="#3d9fe8"/>
+    <path d="M100 90 v40" stroke="#e8397d"/>
+    <path d="M145 90 v40" stroke="#29c282"/>
+    <path d="M190 90 v40" stroke="#e8a33d"/>
+    <rect x="86" y="130" width="28" height="28" rx="6" stroke="#e8397d"/>
+    <rect x="131" y="130" width="28" height="28" rx="6" stroke="#29c282"/>
+    <rect x="176" y="130" width="28" height="28" rx="6" stroke="#e8a33d"/>
+  </g>
+</svg>

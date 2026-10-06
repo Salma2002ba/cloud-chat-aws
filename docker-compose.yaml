@@ -1,0 +1,87 @@
+services:
+  microservice-auth:
+    build:
+      context: ./microservice-auth
+      dockerfile: Dockerfile.dev
+    container_name: microservice-auth
+    environment:
+      - PORT=3001
+      - DB_HOST=postgres-db
+      - DB_PORT=5432
+      - DB_NAME=${POSTGRES_DB}
+      - DB_USER=${POSTGRES_USER}
+      - DB_PASSWORD=${POSTGRES_PASSWORD}
+      - JWT_SECRET=${JWT_SECRET}
+    ports:
+      - "3001:3001"
+    depends_on:
+      postgres-db:
+        condition: service_healthy
+    restart: on-failure
+    networks:
+      - cc-network
+
+  microservice-messaging:
+    build:
+      context: ./microservice-messaging
+      dockerfile: Dockerfile
+    container_name: microservice-messaging
+    environment:
+      - PORT=3002
+      - DB_HOST=postgres-db
+      - DB_PORT=5432
+      - DB_NAME=${POSTGRES_DB}
+      - DB_USER=${POSTGRES_USER}
+      - DB_PASSWORD=${POSTGRES_PASSWORD}
+      - AUTH_SERVICE_URL=http://microservice-auth:3001
+      - JWT_SECRET=${JWT_SECRET}
+    ports:
+      - "3002:3002"
+    depends_on:
+      postgres-db:
+        condition: service_healthy
+      microservice-auth:
+        condition: service_started
+    restart: on-failure
+    networks:
+      - cc-network
+
+  ui-chat:
+    build:
+      context: ./ui-chat
+      dockerfile: Dockerfile
+      args:
+        - VITE_CHAT_API_URL=http://localhost:3002
+        - VITE_AUTH_API_URL=http://localhost:3001
+    container_name: ui-chat
+    ports:
+      - "8080:3000"
+    networks:
+      - cc-network
+
+  postgres-db:
+    image: postgres:13
+    container_name: postgres-db
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    # Les microservices attendent que la base accepte les connexions
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - cc-network
+
+networks:
+  cc-network:
+    driver: bridge
+
+volumes:
+  pgdata:

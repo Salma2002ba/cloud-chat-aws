@@ -1,0 +1,3 @@
+# Copier ce fichier en terraform.tfvars (ignoré par Git) et remplir les valeurs.
+db_password = "un-mot-de-passe-fort"
+jwt_secret  = "une-longue-chaine-aleatoire"

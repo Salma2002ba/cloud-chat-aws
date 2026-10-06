@@ -1,0 +1,41 @@
+# --- ÉTAPE 1 : Builder (Compilation TypeScript) ---
+# On utilise une image node standard pour compiler le TS
+FROM node:20 AS builder
+
+WORKDIR /usr/src/app
+
+# Copie des fichiers de dépendances
+COPY package*.json ./
+
+# Installation de TOUTES les dépendances (y compris devDependencies pour tsc)
+RUN npm ci
+
+# Copie du code source
+COPY . .
+
+# Build du projet (crée le dossier /dist)
+RUN npm run build
+
+
+# --- ÉTAPE 2 : Runner (Image AWS Lambda) ---
+# On utilise l'image officielle AWS optimisée pour Lambda
+FROM public.ecr.aws/lambda/nodejs:20
+
+# ${LAMBDA_TASK_ROOT} est une variable d'env AWS qui pointe vers /var/task
+WORKDIR ${LAMBDA_TASK_ROOT}
+
+# 1. Copie du package.json uniquement
+COPY package*.json ./
+
+# 2. Installation des dépendances de PROD uniquement
+# IMPORTANT : On le fait dans cette image finale pour que 'bcrypt'
+# soit compilé spécifiquement pour l'OS Amazon Linux (et pas Alpine)
+RUN npm ci --omit=dev
+
+# 3. Copie des fichiers compilés (JS) depuis l'étape builder
+# On copie le contenu de dist vers le dossier racine de la Lambda
+COPY --from=builder /usr/src/app/dist ./dist
+
+# 4. Commande de démarrage
+# Syntaxe : "dossier/fichier.fonction_exportée"
+CMD ["dist/lambda.handler"]

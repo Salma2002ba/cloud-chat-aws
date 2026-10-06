@@ -1,0 +1,23 @@
+# Dépendances et builds
+node_modules/
+dist/
+npm-debug.log*
+
+# Secrets et configuration locale
+.env
+.env.*
+!.env.example
+!.env.production.example
+
+# Terraform : état et variables (contiennent des secrets)
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+crash.log
+
+# Éditeurs et système
+.idea/
+.vscode/
+.DS_Store
